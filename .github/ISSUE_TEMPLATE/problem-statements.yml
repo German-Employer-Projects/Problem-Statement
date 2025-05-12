@@ -1,0 +1,60 @@
+name: Submit a Project Challenge
+description: Employers can post technical problems for software engineers to solve.
+title: "[New Project] <Enter Project Title>"
+labels: [employer-submission]
+body:
+  - type: input
+    id: company_name
+    attributes:
+      label: Company Name
+      placeholder: Example: Hugo Bank
+    validations:
+      required: true
+
+  - type: input
+    id: project_title
+    attributes:
+      label: Project Title
+      placeholder: Example: Real-Time Dashboard Optimization
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem_statement
+    attributes:
+      label: Problem Statement
+      description: Describe the task or problem you'd like candidates to solve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_output
+    attributes:
+      label: Expected Outcome
+      description: What result or output should a good solution deliver?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tech_stack
+    attributes:
+      label: Preferred Technologies
+      placeholder: React, Node.js, PostgreSQL
+    validations:
+      required: false
+
+  - type: input
+    id: estimated_time
+    attributes:
+      label: Estimated Completion Time
+      placeholder: Example: 3–6 hours
+    validations:
+      required: false
+
+  - type: textarea
+    id: evaluation_criteria
+    attributes:
+      label: Evaluation Criteria
+      description: What will you look for in submissions (e.g., performance, UI, code quality)?
+    validations:
+      required: false
