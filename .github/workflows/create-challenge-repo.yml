@@ -6,10 +6,16 @@ on:
 
 jobs:
   create-challenge-repo:
-    if: contains(github.event.issue.labels.*.name, 'employer-submission')
+    if: contains(github.event.issue.labels.*.name, 'employer-submission') || startsWith(github.event.issue.title, '[New Project]')
     runs-on: ubuntu-latest
     
     steps:
+    - name: Debug issue information
+      run: |
+        echo "Issue title: ${{ github.event.issue.title }}"
+        echo "Issue labels: ${{ toJson(github.event.issue.labels) }}"
+        echo "Issue body: ${{ github.event.issue.body }}"
+    
     - name: Checkout repository
       uses: actions/checkout@v4
     
