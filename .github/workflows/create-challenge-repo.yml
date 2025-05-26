@@ -22,42 +22,81 @@ jobs:
     - name: Parse issue data
       id: parse_issue
       run: |
-        # Extract data from issue body using your specific field names
-        issue_body="${{ github.event.issue.body }}"
+        # Save issue body to file for easier parsing
+        echo '${{ github.event.issue.body }}' > issue_body.txt
         
-        # Parse company name
-        company_name=$(echo "$issue_body" | grep -A 1 "Company Name" | tail -1 | sed 's/^[[:space:]]*//')
+        # Function to extract field value
+        extract_field() {
+          local field_name="$1"
+          # Look for the field and get everything until the next ### or end of file
+          awk -v field="$field_name" '
+            BEGIN { found=0; content="" }
+            $0 ~ "### " field { found=1; next }
+            found && /^### / { found=0 }
+            found && !/^$/ { 
+              if (content != "") content = content "\n"
+              content = content $0 
+            }
+            END { print content }
+          ' issue_body.txt | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+        }
         
-        # Parse project title
-        project_title=$(echo "$issue_body" | grep -A 1 "Project Title" | tail -1 | sed 's/^[[:space:]]*//')
+        # Extract all fields
+        company_name=$(extract_field "Company Name")
+        project_title=$(extract_field "Project Title")
+        problem_statement=$(extract_field "Problem Statement")
+        expected_outcome=$(extract_field "Expected Outcome")
+        tech_stack=$(extract_field "Preferred Technologies")
+        estimated_time=$(extract_field "Estimated Completion Time")
+        evaluation_criteria=$(extract_field "Evaluation Criteria")
         
-        # Parse problem statement  
-        problem_statement=$(echo "$issue_body" | sed -n '/Problem Statement/,/Expected Outcome/p' | sed '1d;$d' | sed 's/^[[:space:]]*//')
+        # If extraction fails, try alternative method
+        if [ -z "$project_title" ]; then
+          # Fallback to simple grep method
+          project_title=$(grep -A 1 "Project Title" issue_body.txt | tail -1 | sed 's/^[[:space:]]*//')
+        fi
         
-        # Parse expected outcome
-        expected_output=$(echo "$issue_body" | sed -n '/Expected Outcome/,/Preferred Technologies/p' | sed '1d;$d' | sed 's/^[[:space:]]*//')
-        
-        # Parse tech stack
-        tech_stack=$(echo "$issue_body" | sed -n '/Preferred Technologies/,/Estimated Completion Time/p' | sed '1d;$d' | sed 's/^[[:space:]]*//')
-        
-        # Parse estimated time
-        estimated_time=$(echo "$issue_body" | grep -A 1 "Estimated Completion Time" | tail -1 | sed 's/^[[:space:]]*//')
-        
-        # Parse evaluation criteria
-        evaluation_criteria=$(echo "$issue_body" | sed -n '/Evaluation Criteria/,$p' | sed '1d' | sed 's/^[[:space:]]*//')
+        if [ -z "$company_name" ]; then
+          company_name=$(grep -A 1 "Company Name" issue_body.txt | tail -1 | sed 's/^[[:space:]]*//')
+        fi
         
         # Create repository name (sanitize project title)
         repo_name=$(echo "$project_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
         
-        # Set outputs
-        echo "company_name=$company_name" >> $GITHUB_OUTPUT
-        echo "project_title=$project_title" >> $GITHUB_OUTPUT
-        echo "repo_name=$repo_name" >> $GITHUB_OUTPUT
-        echo "problem_statement=$problem_statement" >> $GITHUB_OUTPUT
-        echo "expected_output=$expected_output" >> $GITHUB_OUTPUT
-        echo "tech_stack=$tech_stack" >> $GITHUB_OUTPUT
-        echo "estimated_time=$estimated_time" >> $GITHUB_OUTPUT
-        echo "evaluation_criteria=$evaluation_criteria" >> $GITHUB_OUTPUT
+        # Debug output
+        echo "=== PARSED DATA ==="
+        echo "Company: [$company_name]"
+        echo "Project: [$project_title]"
+        echo "Repo name: [$repo_name]"
+        echo "Problem statement length: ${#problem_statement}"
+        
+        # Set outputs with proper escaping
+        {
+          echo "company_name<<EOF"
+          echo "$company_name"
+          echo "EOF"
+          echo "project_title<<EOF"
+          echo "$project_title"
+          echo "EOF"
+          echo "repo_name<<EOF" 
+          echo "$repo_name"
+          echo "EOF"
+          echo "problem_statement<<EOF"
+          echo "$problem_statement"
+          echo "EOF"
+          echo "expected_outcome<<EOF"
+          echo "$expected_outcome"
+          echo "EOF"
+          echo "tech_stack<<EOF"
+          echo "$tech_stack"
+          echo "EOF"
+          echo "estimated_time<<EOF"
+          echo "$estimated_time"
+          echo "EOF"
+          echo "evaluation_criteria<<EOF"
+          echo "$evaluation_criteria"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
     
     - name: Create new repository
       id: create_repo
@@ -99,7 +138,7 @@ jobs:
         ${{ steps.parse_issue.outputs.problem_statement }}
         
         ## Expected Outcome
-        ${{ steps.parse_issue.outputs.expected_output }}
+        ${{ steps.parse_issue.outputs.expected_outcome }}
         
         ## Preferred Technologies
         ${{ steps.parse_issue.outputs.tech_stack }}
