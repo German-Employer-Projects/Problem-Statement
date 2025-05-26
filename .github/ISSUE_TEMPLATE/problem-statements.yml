@@ -1,213 +1,54 @@
-name: Create Challenge Repository
-
-on:
-  issues:
-    types: [opened]
-
-jobs:
-  create-challenge-repo:
-    if: contains(github.event.issue.labels.*.name, 'employer-submission')
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Parse issue data
-      id: parse_issue
-      run: |
-        # Extract data from issue body using your specific field names
-        issue_body="${{ github.event.issue.body }}"
-        
-        # Parse company name
-        company_name=$(echo "$issue_body" | grep -A 1 "Company Name" | tail -1 | sed 's/^[[:space:]]*//')
-        
-        # Parse project title
-        project_title=$(echo "$issue_body" | grep -A 1 "Project Title" | tail -1 | sed 's/^[[:space:]]*//')
-        
-        # Parse problem statement  
-        problem_statement=$(echo "$issue_body" | sed -n '/Problem Statement/,/Expected Outcome/p' | sed '1d;$d' | sed 's/^[[:space:]]*//')
-        
-        # Parse expected outcome
-        expected_output=$(echo "$issue_body" | sed -n '/Expected Outcome/,/Preferred Technologies/p' | sed '1d;$d' | sed 's/^[[:space:]]*//')
-        
-        # Parse tech stack
-        tech_stack=$(echo "$issue_body" | sed -n '/Preferred Technologies/,/Estimated Completion Time/p' | sed '1d;$d' | sed 's/^[[:space:]]*//')
-        
-        # Parse estimated time
-        estimated_time=$(echo "$issue_body" | grep -A 1 "Estimated Completion Time" | tail -1 | sed 's/^[[:space:]]*//')
-        
-        # Parse evaluation criteria
-        evaluation_criteria=$(echo "$issue_body" | sed -n '/Evaluation Criteria/,$p' | sed '1d' | sed 's/^[[:space:]]*//')
-        
-        # Create repository name (sanitize project title)
-        repo_name=$(echo "$project_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
-        
-        # Set outputs
-        echo "company_name=$company_name" >> $GITHUB_OUTPUT
-        echo "project_title=$project_title" >> $GITHUB_OUTPUT
-        echo "repo_name=$repo_name" >> $GITHUB_OUTPUT
-        echo "problem_statement=$problem_statement" >> $GITHUB_OUTPUT
-        echo "expected_output=$expected_output" >> $GITHUB_OUTPUT
-        echo "tech_stack=$tech_stack" >> $GITHUB_OUTPUT
-        echo "estimated_time=$estimated_time" >> $GITHUB_OUTPUT
-        echo "evaluation_criteria=$evaluation_criteria" >> $GITHUB_OUTPUT
-    
-    - name: Create new repository
-      id: create_repo
-      run: |
-        repo_name="${{ steps.parse_issue.outputs.repo_name }}"
-        project_title="${{ steps.parse_issue.outputs.project_title }}"
-        company_name="${{ steps.parse_issue.outputs.company_name }}"
-        
-        # Create repository using GitHub API
-        response=$(curl -X POST \
-          -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/user/repos \
-          -d "{
-            \"name\": \"$repo_name\",
-            \"description\": \"Challenge from $company_name: $project_title\",
-            \"private\": false,
-            \"auto_init\": true
-          }")
-        
-        # Extract repository URL
-        repo_url=$(echo "$response" | jq -r '.html_url')
-        clone_url=$(echo "$response" | jq -r '.clone_url')
-        
-        echo "repo_url=$repo_url" >> $GITHUB_OUTPUT
-        echo "clone_url=$clone_url" >> $GITHUB_OUTPUT
-        
-        echo "Created repository: $repo_url"
-    
-    - name: Create README.md content
-      id: create_readme
-      run: |
-        cat > README.md << 'EOF'
-        # ${{ steps.parse_issue.outputs.project_title }}
-        
-        **Company:** ${{ steps.parse_issue.outputs.company_name }}
-        
-        ## Problem Statement
-        ${{ steps.parse_issue.outputs.problem_statement }}
-        
-        ## Expected Outcome
-        ${{ steps.parse_issue.outputs.expected_output }}
-        
-        ## Preferred Technologies
-        ${{ steps.parse_issue.outputs.tech_stack }}
-        
-        ## Challenge Details
-        - **Estimated Completion Time:** ${{ steps.parse_issue.outputs.estimated_time }}
-        - **Company:** ${{ steps.parse_issue.outputs.company_name }}
-        - **Original Issue:** [${{ github.event.issue.title }}](${{ github.event.issue.html_url }})
-        
-        ## Evaluation Criteria
-        ${{ steps.parse_issue.outputs.evaluation_criteria }}
-        
-        ---
-        
-        ## 🚀 How to Submit Your Solution
-        
-        ### Step 1: Fork this Repository
-        1. Click the "Fork" button at the top right of this repository
-        2. This creates a copy of the challenge in your GitHub account
-        
-        ### Step 2: Clone Your Fork
-        ```bash
-        git clone https://github.com/YOUR_USERNAME/${{ steps.parse_issue.outputs.repo_name }}.git
-        cd ${{ steps.parse_issue.outputs.repo_name }}
-        ```
-        
-        ### Step 3: Implement Your Solution
-        - Create your solution files in the repository
-        - Follow the requirements and use the preferred technologies mentioned above
-        - Include clear documentation and comments in your code
-        - Add a brief explanation of your approach below (replace this section)
-        
-        ### Your Solution Explanation
-        <!-- Replace this section with your approach and any notes for reviewers -->
-        **Your Name:** [Your Name]
-        **Contact:** [Your Email/LinkedIn]
-        **Approach:** [Briefly explain your solution approach]
-        **Key Features:** [List main features of your solution]
-        **Assumptions:** [Any assumptions you made]
-        **Future Improvements:** [What you would add given more time]
-        
-        ### Step 4: Commit and Push
-        ```bash
-        git add .
-        git commit -m "Add solution for ${{ steps.parse_issue.outputs.project_title }}"
-        git push origin main
-        ```
-        
-        ### Step 5: Create Pull Request
-        1. Go to your forked repository on GitHub
-        2. Click "Contribute" → "Open pull request"
-        3. Title: "Solution by [Your Name]"
-        4. In the description, briefly explain your solution and any special instructions
-        5. Submit the pull request
-        
-        ## 📝 Submission Checklist
-        Before submitting, make sure you have:
-        - [ ] Implemented the core functionality described in the problem statement
-        - [ ] Used the preferred technologies (or explained why you chose alternatives)
-        - [ ] Added clear documentation/comments in your code
-        - [ ] Included a README section explaining your approach
-        - [ ] Tested your solution thoroughly
-        - [ ] Created a clear Pull Request with good description
-        
-        ## ❓ Questions?
-        If you have questions about this challenge:
-        1. Check existing Issues in this repository first
-        2. If your question hasn't been asked, create a new Issue
-        3. Tag it with "question" label
-        4. Be specific about what you need clarification on
-        
-        **Good luck! 🎯**
-        EOF
-    
-    - name: Add README to new repository
-      run: |
-        repo_name="${{ steps.parse_issue.outputs.repo_name }}"
-        
-        # Clone the newly created repository
-        git clone https://${{ secrets.REPO_CREATION_TOKEN }}@github.com/${{ github.repository_owner }}/$repo_name.git temp_repo
-        cd temp_repo
-        
-        # Configure git
-        git config user.name "Challenge Bot"
-        git config user.email "noreply@github.com"
-        
-        # Copy README
-        cp ../README.md .
-        
-        # Commit and push
-        git add README.md
-        git commit -m "Add challenge description and submission instructions"
-        git push origin main
-        
-        cd ..
-        rm -rf temp_repo
-    
-    - name: Update original issue
-      run: |
-        repo_url="${{ steps.create_repo.outputs.repo_url }}"
-        company_name="${{ steps.parse_issue.outputs.company_name }}"
-        
-        # Add comment to original issue with repository link
-        curl -X POST \
-          -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-          -d "{
-            \"body\": \"✅ **Challenge repository created successfully for $company_name!**\\n\\n🔗 **Repository URL:** $repo_url\\n\\n**Next Steps:**\\n1. Share this repository URL with candidates\\n2. Candidates should fork the repo and submit solutions via Pull Requests\\n3. You can review submissions in the Pull Requests tab of the new repository\\n4. Add yourself or your team as collaborators to the repository for review access\\n\\n**Repository includes:**\\n- Complete problem statement and requirements\\n- Step-by-step submission instructions for candidates\\n- Evaluation criteria\\n- Submission checklist\\n\\nCandidates will submit by forking the repository and creating Pull Requests with their solutions.\"
-          }"
-        
-        # Add "repository-created" label and remove "employer-submission" 
-        curl -X POST \
-          -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/labels \
-          -d '["repository-created"]'
+name: "Submit a Project Challenge"
+description: "Employers can post technical problems for software engineers to solve."
+title: "[New Project] <Enter Project Title>"
+labels: ["employer-submission"]
+body:
+  - type: input
+    id: company_name
+    attributes:
+      label: "Company Name"
+      placeholder: "Example: Hugo Bank"
+    validations:
+      required: true
+  - type: input
+    id: project_title
+    attributes:
+      label: "Project Title"
+      placeholder: "Example: Real-Time Dashboard Optimization"
+    validations:
+      required: true
+  - type: textarea
+    id: problem_statement
+    attributes:
+      label: "Problem Statement"
+      description: "Describe the task or problem you'd like candidates to solve."
+    validations:
+      required: true
+  - type: textarea
+    id: expected_output
+    attributes:
+      label: "Expected Outcome"
+      description: "What result or output should a good solution deliver?"
+    validations:
+      required: false
+  - type: textarea
+    id: tech_stack
+    attributes:
+      label: "Preferred Technologies"
+      placeholder: "React, Node.js, PostgreSQL"
+    validations:
+      required: false
+  - type: input
+    id: estimated_time
+    attributes:
+      label: "Estimated Completion Time"
+      placeholder: "Example: 3–6 hours"
+    validations:
+      required: false
+  - type: textarea
+    id: evaluation_criteria
+    attributes:
+      label: "Evaluation Criteria"
+      description: "What will you look for in submissions (e.g., performance, UI, code quality)?"
+    validations:
+      required: false
