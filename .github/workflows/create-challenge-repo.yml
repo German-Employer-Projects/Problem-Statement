@@ -105,8 +105,10 @@ jobs:
         project_title="${{ steps.parse_issue.outputs.project_title }}"
         company_name="${{ steps.parse_issue.outputs.company_name }}"
         
+        echo "Creating repository: $repo_name"
+        
         # Create repository in organization using GitHub API
-        response=$(curl -X POST \
+        response=$(curl -s -X POST \
           -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/orgs/German-Employer-Project/repos \
@@ -117,14 +119,34 @@ jobs:
             \"auto_init\": true
           }")
         
-        # Extract repository URL
-        repo_url=$(echo "$response" | jq -r '.html_url')
-        clone_url=$(echo "$response" | jq -r '.clone_url')
+        echo "API Response: $response"
         
-        echo "repo_url=$repo_url" >> $GITHUB_OUTPUT
-        echo "clone_url=$clone_url" >> $GITHUB_OUTPUT
-        
-        echo "Created repository: $repo_url"
+        # Check if repository was created successfully
+        if echo "$response" | grep -q '"id"'; then
+          # Extract repository URL
+          repo_url=$(echo "$response" | jq -r '.html_url // empty')
+          clone_url=$(echo "$response" | jq -r '.clone_url // empty')
+          
+          # If jq parsing fails, construct URLs manually
+          if [ -z "$repo_url" ] || [ "$repo_url" = "null" ]; then
+            repo_url="https://github.com/German-Employer-Project/$repo_name"
+            clone_url="https://github.com/German-Employer-Project/$repo_name.git"
+          fi
+          
+          echo "Repository created successfully!"
+          echo "Repository URL: $repo_url"
+          echo "Clone URL: $clone_url"
+          
+          # Set outputs
+          echo "repo_url=$repo_url" >> $GITHUB_OUTPUT
+          echo "clone_url=$clone_url" >> $GITHUB_OUTPUT
+          echo "success=true" >> $GITHUB_OUTPUT
+        else
+          echo "Failed to create repository"
+          echo "Error response: $response"
+          echo "success=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
     
     - name: Create README.md content
       id: create_readme
@@ -214,29 +236,56 @@ jobs:
         EOF
     
     - name: Add README to new repository
+      if: steps.create_repo.outputs.success == 'true'
       run: |
         repo_name="${{ steps.parse_issue.outputs.repo_name }}"
         
+        echo "Waiting for repository to be fully initialized..."
+        sleep 10
+        
         # Clone the newly created repository
+        echo "Cloning repository..."
         git clone https://${{ secrets.REPO_CREATION_TOKEN }}@github.com/German-Employer-Project/$repo_name.git temp_repo
-        cd temp_repo
         
-        # Configure git
-        git config user.name "Challenge Bot"
-        git config user.email "noreply@github.com"
-        
-        # Copy README
-        cp ../README.md .
-        
-        # Commit and push
-        git add README.md
-        git commit -m "Add challenge description and submission instructions"
-        git push origin main
-        
-        cd ..
-        rm -rf temp_repo
+        if [ ! -d "temp_repo" ]; then
+          echo "Failed to clone repository. Trying alternative approach..."
+          
+          # Alternative: Create repository content via API
+          readme_content=$(cat README.md | base64 -w 0)
+          
+          curl -X PUT \
+            -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/German-Employer-Project/$repo_name/contents/README.md \
+            -d "{
+              \"message\": \"Add challenge description and submission instructions\",
+              \"content\": \"$readme_content\"
+            }"
+          
+          echo "README added via API"
+        else
+          cd temp_repo
+          
+          # Configure git
+          git config user.name "Challenge Bot"
+          git config user.email "noreply@github.com"
+          
+          # Copy and update README
+          cp ../README.md .
+          
+          # Commit and push
+          git add README.md
+          git commit -m "Add challenge description and submission instructions"
+          git push origin main
+          
+          cd ..
+          rm -rf temp_repo
+          
+          echo "README added via git"
+        fi
     
     - name: Update original issue
+      if: steps.create_repo.outputs.success == 'true'
       run: |
         repo_url="${{ steps.create_repo.outputs.repo_url }}"
         company_name="${{ steps.parse_issue.outputs.company_name }}"
