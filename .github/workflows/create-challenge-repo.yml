@@ -19,6 +19,31 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     
+    - name: Verify token and organization access
+      run: |
+        echo "Testing API access..."
+        
+        # Test basic authentication
+        auth_response=$(curl -s -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/user)
+        
+        echo "Auth test response: $auth_response"
+        
+        # Test organization access
+        org_response=$(curl -s -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/orgs/German-Employer-Project)
+        
+        echo "Organization test response: $org_response"
+        
+        # List organization repositories (to verify access)
+        repos_response=$(curl -s -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/orgs/German-Employer-Project/repos)
+        
+        echo "Organization repos response: $repos_response"
+    
     - name: Parse issue data
       id: parse_issue
       run: |
@@ -50,18 +75,30 @@ jobs:
         estimated_time=$(extract_field "Estimated Completion Time")
         evaluation_criteria=$(extract_field "Evaluation Criteria")
         
-        # If extraction fails, try alternative method
+        # If extraction fails, try alternative methods
         if [ -z "$project_title" ]; then
-          # Fallback to simple grep method
-          project_title=$(grep -A 1 "Project Title" issue_body.txt | tail -1 | sed 's/^[[:space:]]*//')
+          # Try different patterns
+          project_title=$(grep -A 3 -i "project title" issue_body.txt | grep -v "###" | head -1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
         fi
         
         if [ -z "$company_name" ]; then
-          company_name=$(grep -A 1 "Company Name" issue_body.txt | tail -1 | sed 's/^[[:space:]]*//')
+          company_name=$(grep -A 3 -i "company name" issue_body.txt | grep -v "###" | head -1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+        fi
+        
+        # Fallback: use issue title if project title is empty
+        if [ -z "$project_title" ]; then
+          project_title="${{ github.event.issue.title }}"
+          # Remove [New Project] prefix if present
+          project_title=$(echo "$project_title" | sed 's/^\[New Project\][[:space:]]*//')
         fi
         
         # Create repository name (sanitize project title)
         repo_name=$(echo "$project_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
+        
+        # Ensure repo name is not empty and has reasonable length
+        if [ -z "$repo_name" ] || [ ${#repo_name} -lt 3 ]; then
+          repo_name="challenge-$(date +%s)"
+        fi
         
         # Debug output
         echo "=== PARSED DATA ==="
@@ -106,9 +143,10 @@ jobs:
         company_name="${{ steps.parse_issue.outputs.company_name }}"
         
         echo "Creating repository: $repo_name"
+        echo "Organization: German-Employer-Project"
         
         # Create repository in organization using GitHub API
-        response=$(curl -s -X POST \
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
           -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/orgs/German-Employer-Project/repos \
@@ -116,16 +154,24 @@ jobs:
             \"name\": \"$repo_name\",
             \"description\": \"Challenge from $company_name: $project_title\",
             \"private\": false,
-            \"auto_init\": true
+            \"auto_init\": true,
+            \"has_issues\": true,
+            \"has_projects\": true,
+            \"has_wiki\": false
           }")
         
-        echo "API Response: $response"
+        # Extract HTTP status code
+        http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d: -f2)
+        response_body=$(echo "$response" | sed '/HTTP_STATUS:/d')
+        
+        echo "HTTP Status: $http_status"
+        echo "API Response: $response_body"
         
         # Check if repository was created successfully
-        if echo "$response" | grep -q '"id"'; then
+        if [ "$http_status" = "201" ] || echo "$response_body" | grep -q '"id"'; then
           # Extract repository URL
-          repo_url=$(echo "$response" | jq -r '.html_url // empty')
-          clone_url=$(echo "$response" | jq -r '.clone_url // empty')
+          repo_url=$(echo "$response_body" | jq -r '.html_url // empty')
+          clone_url=$(echo "$response_body" | jq -r '.clone_url // empty')
           
           # If jq parsing fails, construct URLs manually
           if [ -z "$repo_url" ] || [ "$repo_url" = "null" ]; then
@@ -143,7 +189,23 @@ jobs:
           echo "success=true" >> $GITHUB_OUTPUT
         else
           echo "Failed to create repository"
-          echo "Error response: $response"
+          echo "HTTP Status: $http_status"
+          echo "Error response: $response_body"
+          
+          # Try to provide more specific error information
+          if [ "$http_status" = "404" ]; then
+            echo "404 Error: This usually means:"
+            echo "- Organization 'German-Employer-Project' doesn't exist"
+            echo "- Token doesn't have access to the organization"
+            echo "- Token doesn't have repo creation permissions"
+          elif [ "$http_status" = "401" ]; then
+            echo "401 Error: Token authentication failed"
+          elif [ "$http_status" = "403" ]; then
+            echo "403 Error: Token doesn't have required permissions"
+          elif [ "$http_status" = "422" ]; then
+            echo "422 Error: Repository name might already exist or be invalid"
+          fi
+          
           echo "success=false" >> $GITHUB_OUTPUT
           exit 1
         fi
@@ -191,39 +253,74 @@ jobs:
         - Create your solution files in the repository
         - Follow the requirements and use the preferred technologies mentioned above
         - Include clear documentation and comments in your code
-        - Add a brief explanation of your approach below (replace this section)
+        - Add a brief explanation of your approach in the section below
         
         ### Your Solution Explanation
         <!-- Replace this section with your approach and any notes for reviewers -->
         **Your Name:** [Your Name]
+        
         **Contact:** [Your Email/LinkedIn]
+        
         **Approach:** [Briefly explain your solution approach]
+        
         **Key Features:** [List main features of your solution]
+        
+        **Technologies Used:** [List the technologies you used]
+        
+        **Setup Instructions:**
+        ```bash
+        # Add commands to run your solution
+        # Example:
+        # npm install
+        # npm start
+        ```
+        
         **Assumptions:** [Any assumptions you made]
+        
         **Future Improvements:** [What you would add given more time]
         
-        ### Step 4: Commit and Push
+        ### Step 4: Testing Your Solution
+        Before submitting, make sure to:
+        - Test all functionality thoroughly
+        - Verify your solution meets the requirements
+        - Check that your code follows best practices
+        - Ensure your documentation is clear and complete
+        
+        ### Step 5: Commit and Push
         ```bash
         git add .
         git commit -m "Add solution for ${{ steps.parse_issue.outputs.project_title }}"
         git push origin main
         ```
         
-        ### Step 5: Create Pull Request
+        ### Step 6: Create Pull Request
         1. Go to your forked repository on GitHub
         2. Click "Contribute" → "Open pull request"
-        3. Title: "Solution by [Your Name]"
-        4. In the description, briefly explain your solution and any special instructions
+        3. Title: "Solution by [Your Name] - [Brief Description]"
+        4. In the description, include:
+           - Brief summary of your solution
+           - Any special setup instructions
+           - Screenshots/demos if applicable
+           - Any challenges you faced and how you solved them
         5. Submit the pull request
         
         ## 📝 Submission Checklist
         Before submitting, make sure you have:
-        - [ ] Implemented the core functionality described in the problem statement
+        - [ ] Implemented all core functionality described in the problem statement
         - [ ] Used the preferred technologies (or explained why you chose alternatives)
         - [ ] Added clear documentation/comments in your code
-        - [ ] Included a README section explaining your approach
+        - [ ] Included a comprehensive README section explaining your approach
         - [ ] Tested your solution thoroughly
-        - [ ] Created a clear Pull Request with good description
+        - [ ] Added proper setup/installation instructions
+        - [ ] Created a clear Pull Request with a good description
+        - [ ] Included your contact information for follow-up
+        
+        ## 🔍 Review Process
+        After submitting your Pull Request:
+        1. The company will review your submission
+        2. They may ask questions or request clarifications through PR comments
+        3. You can respond to feedback and make updates to your fork
+        4. The review process typically takes 3-5 business days
         
         ## ❓ Questions?
         If you have questions about this challenge:
@@ -232,7 +329,13 @@ jobs:
         3. Tag it with "question" label
         4. Be specific about what you need clarification on
         
+        ## 📧 Contact
+        For urgent matters or general inquiries, you can reach out through the original issue: [${{ github.event.issue.title }}](${{ github.event.issue.html_url }})
+        
         **Good luck! 🎯**
+        
+        ---
+        *This challenge repository was automatically created from [German-Employer-Project](https://github.com/German-Employer-Project/Problem-Statement)*
         EOF
     
     - name: Add README to new repository
@@ -240,48 +343,59 @@ jobs:
       run: |
         repo_name="${{ steps.parse_issue.outputs.repo_name }}"
         
+        echo "Adding README to repository: $repo_name"
         echo "Waiting for repository to be fully initialized..."
         sleep 10
         
-        # Clone the newly created repository
-        echo "Cloning repository..."
-        git clone https://${{ secrets.REPO_CREATION_TOKEN }}@github.com/German-Employer-Project/$repo_name.git temp_repo
+        # Try API approach first (more reliable)
+        readme_content=$(cat README.md | base64 -w 0)
         
-        if [ ! -d "temp_repo" ]; then
-          echo "Failed to clone repository. Trying alternative approach..."
-          
-          # Alternative: Create repository content via API
-          readme_content=$(cat README.md | base64 -w 0)
-          
-          curl -X PUT \
-            -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/German-Employer-Project/$repo_name/contents/README.md \
-            -d "{
-              \"message\": \"Add challenge description and submission instructions\",
-              \"content\": \"$readme_content\"
-            }"
-          
-          echo "README added via API"
+        api_response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X PUT \
+          -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/German-Employer-Project/$repo_name/contents/README.md \
+          -d "{
+            \"message\": \"Add challenge description and submission instructions\",
+            \"content\": \"$readme_content\",
+            \"branch\": \"main\"
+          }")
+        
+        api_status=$(echo "$api_response" | grep "HTTP_STATUS:" | cut -d: -f2)
+        api_body=$(echo "$api_response" | sed '/HTTP_STATUS:/d')
+        
+        echo "README API Status: $api_status"
+        echo "README API Response: $api_body"
+        
+        if [ "$api_status" = "201" ] || echo "$api_body" | grep -q '"content"'; then
+          echo "README added successfully via API"
         else
-          cd temp_repo
+          echo "API approach failed, trying git clone method..."
           
-          # Configure git
-          git config user.name "Challenge Bot"
-          git config user.email "noreply@github.com"
+          # Fallback: Clone and push method
+          git clone https://${{ secrets.REPO_CREATION_TOKEN }}@github.com/German-Employer-Project/$repo_name.git temp_repo
           
-          # Copy and update README
-          cp ../README.md .
-          
-          # Commit and push
-          git add README.md
-          git commit -m "Add challenge description and submission instructions"
-          git push origin main
-          
-          cd ..
-          rm -rf temp_repo
-          
-          echo "README added via git"
+          if [ -d "temp_repo" ]; then
+            cd temp_repo
+            
+            # Configure git
+            git config user.name "Challenge Bot"
+            git config user.email "noreply@github.com"
+            
+            # Copy and update README
+            cp ../README.md .
+            
+            # Commit and push
+            git add README.md
+            git commit -m "Add challenge description and submission instructions"
+            git push origin main
+            
+            cd ..
+            rm -rf temp_repo
+            
+            echo "README added via git clone method"
+          else
+            echo "Warning: Failed to add README to repository"
+          fi
         fi
     
     - name: Update original issue
@@ -289,6 +403,7 @@ jobs:
       run: |
         repo_url="${{ steps.create_repo.outputs.repo_url }}"
         company_name="${{ steps.parse_issue.outputs.company_name }}"
+        project_title="${{ steps.parse_issue.outputs.project_title }}"
         
         # Add comment to original issue with repository link
         curl -X POST \
@@ -296,12 +411,19 @@ jobs:
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
           -d "{
-            \"body\": \"✅ **Challenge repository created successfully for $company_name!**\\n\\n🔗 **Repository URL:** $repo_url\\n\\n**Next Steps:**\\n1. Share this repository URL with candidates\\n2. Candidates should fork the repo and submit solutions via Pull Requests\\n3. You can review submissions in the Pull Requests tab of the new repository\\n4. Add yourself or your team as collaborators to the repository for review access\\n\\n**Repository includes:**\\n- Complete problem statement and requirements\\n- Step-by-step submission instructions for candidates\\n- Evaluation criteria\\n- Submission checklist\\n\\nCandidates will submit by forking the repository and creating Pull Requests with their solutions.\"
+            \"body\": \"✅ **Challenge repository created successfully!**\\n\\n🏢 **Company:** $company_name\\n📋 **Project:** $project_title\\n🔗 **Repository URL:** $repo_url\\n\\n## Next Steps for $company_name:\\n\\n### 1. Repository Access\\n- Add yourself and your team as collaborators to the repository for review access\\n- Go to: $repo_url/settings/access\\n- Click 'Add people' and invite team members with 'Write' or 'Maintain' access\\n\\n### 2. Candidate Submission Process\\n- Share the repository URL with candidates: $repo_url\\n- Candidates will fork the repository and submit solutions via Pull Requests\\n- All submission instructions are included in the repository README\\n\\n### 3. Review Submissions\\n- Monitor Pull Requests in: $repo_url/pulls\\n- Review code, leave comments, and request changes as needed\\n- Use labels (good, needs-improvement, approved, rejected) for organization\\n- The repository includes evaluation criteria and submission checklist\\n\\n### 4. Repository Features\\n- ✅ Complete problem statement and requirements\\n- ✅ Step-by-step submission instructions for candidates\\n- ✅ Evaluation criteria and submission checklist\\n- ✅ Issues enabled for candidate questions\\n- ✅ Projects enabled for tracking submissions\\n\\n**The repository is ready for candidate submissions!** 🚀\"
           }"
         
-        # Add "repository-created" label and remove "employer-submission" 
+        # Add "repository-created" label
         curl -X POST \
           -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/labels \
           -d '["repository-created"]'
+        
+        # Close the issue as completed
+        curl -X PATCH \
+          -H "Authorization: token ${{ secrets.REPO_CREATION_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }} \
+          -d '{"state": "closed", "state_reason": "completed"}'
